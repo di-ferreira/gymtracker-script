@@ -3,6 +3,8 @@ import io
 import json
 import logging
 import os
+import shutil
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -146,21 +148,34 @@ class CloudAIClient(BaseAIClient):
     def _analyze_google(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         from google.genai import types
 
-        file_ref = self._client.files.upload(file=gif_path)
-        system = PromptBuilder.build_system_prompt(include_few_shot=self.use_few_shot)
+        tmp = None
+        safe_path = gif_path
+        if any(ord(c) > 127 for c in str(gif_path)):
+            tmp = tempfile.NamedTemporaryFile(suffix=".gif", delete=False)
+            shutil.copy2(gif_path, tmp.name)
+            safe_path = Path(tmp.name)
 
-        response = self._client.models.generate_content(
-            model=self.model,
-            contents=[
-                system,
-                PromptBuilder.build_user_message(file_name),
-                file_ref,
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-            ),
-        )
-        return self._process_response(response.text, file_name)
+        try:
+            file_ref = self._client.files.upload(file=safe_path)
+            system = PromptBuilder.build_system_prompt(
+                include_few_shot=self.use_few_shot
+            )
+
+            response = self._client.models.generate_content(
+                model=self.model,
+                contents=[
+                    system,
+                    PromptBuilder.build_user_message(file_name),
+                    file_ref,
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            return self._process_response(response.text, file_name)
+        finally:
+            if tmp is not None:
+                os.unlink(tmp.name)
 
 
 class LocalAIClient(BaseAIClient):
@@ -246,11 +261,28 @@ def create_ai_client() -> BaseAIClient:
 
     if mode == "cloud":
         provider = os.getenv("AI_PROVIDER", "openai").lower()
+        model = os.getenv("AI_MODEL", "")
+
+        if provider == "google" and model and not model.startswith("gemini-"):
+            logger.warning(
+                "Google model '%s' doesn't match expected pattern 'gemini-*'. "
+                "Common values: gemini-2.5-flash, gemini-2.5-pro",
+                model,
+            )
+        elif provider == "openai" and model and not model.startswith(
+            ("gpt-", "o")
+        ):
+            logger.warning(
+                "OpenAI model '%s' doesn't match expected pattern 'gpt-*' or 'o*'. "
+                "Common values: gpt-4o, gpt-4o-mini",
+                model,
+            )
+
         if provider == "openai":
             return CloudAIClient(
                 provider="openai",
                 api_key=os.getenv("OPENAI_API_KEY", ""),
-                model=os.getenv("AI_MODEL", ""),
+                model=model,
                 rate_limit=rate_limit,
                 use_few_shot=use_few_shot,
             )

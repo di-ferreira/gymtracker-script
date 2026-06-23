@@ -12,35 +12,15 @@ import httpx
 from PIL import Image
 
 from skills.media_processor import extract_gif_frames
+from skills.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Você é um especialista em biomecânica, cinesiologia e exercícios físicos.
-Sua função é analisar imagens/GIFs de exercícios e retornar informações estruturadas.
-
-Analise o GIF (ou seus frames) e o nome do arquivo para identificar o exercício.
-Retorna APENAS um objeto JSON válido, sem markdown, sem comentários, sem texto extra:
-
-{
-  "nome_exercicio": "Nome padronizado e comercial do exercício em português (ex: Agachamento Livre)",
-  "grupo_muscular": "Descrição textual dos músculos principais e secundários ativados",
-  "musculo_primario": "Nome do grupo muscular principal (ex: Quadríceps, Peitoral, Costas, Glúteos, Ombros, Bíceps, Tríceps, Abdômen, Panturrilha, Trapézio, Antebraço, Posterior de Coxa)",
-  "modo_execucao": "Passo a passo detalhado de como realizar o movimento corretamente, numerando cada etapa (1. ..., 2. ..., etc.)",
-  "dicas_seguranca": "Alertas sobre postura, erros comuns a evitar e recomendações de segurança",
-  "equipamentos": ["Lista dos equipamentos utilizados (ex: halteres, barra, banco, máquina, cabo, elástico, smith, bola, step, kettlebell, peso corporal)"],
-  "tipo_movimento": "Tipo de movimento: composto, isolamento, funcional, calistenia",
-  "tags": ["tag1", "tag2", "tag3"]
-}
-
-Use tags relevantes como: pernas, costas, peito, ombros, braços, abdomen, gluteos,
-quadriceps, posterior, costa, superior, inferior, fullbody, hipertrofia, resistencia,
-calistenia, funcional, maquina, halteres, barra, cabo, elastico, smith, casa, academia,
-basico, intermediario, avancado."""
-
 
 class BaseAIClient(ABC):
-    def __init__(self, rate_limit: int = 15):
+    def __init__(self, rate_limit: int = 15, use_few_shot: bool = False):
         self.rate_limit = rate_limit
+        self.use_few_shot = use_few_shot
         self._last_call_time = 0.0
         self._min_interval = 60.0 / max(rate_limit, 1)
 
@@ -64,6 +44,22 @@ class BaseAIClient(ABC):
                 text = text[start : end + 1]
         return json.loads(text)
 
+    def _process_response(
+        self, raw: str, file_name: str
+    ) -> Dict[str, Any]:
+        try:
+            data = self._parse_json_response(raw)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("JSON inválido retornado pela IA: %s", e)
+            return PromptBuilder.fallback_from_filename(file_name)
+
+        valid, errors = PromptBuilder.validate_response(data)
+        if valid:
+            return data
+
+        logger.info("Campos a reparar na resposta da IA: %s", errors)
+        return PromptBuilder.repair_partial_response(data, file_name)
+
 
 class CloudAIClient(BaseAIClient):
     def __init__(
@@ -72,8 +68,9 @@ class CloudAIClient(BaseAIClient):
         api_key: str = "",
         model: str = "",
         rate_limit: int = 15,
+        use_few_shot: bool = False,
     ):
-        super().__init__(rate_limit)
+        super().__init__(rate_limit, use_few_shot)
         self.provider = provider.lower()
         self.api_key = api_key
 
@@ -98,17 +95,18 @@ class CloudAIClient(BaseAIClient):
         with open(gif_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
         data_url = f"data:image/gif;base64,{b64}"
+        system = PromptBuilder.build_system_prompt(include_few_shot=self.use_few_shot)
 
         response = self._client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Analise o exercício no arquivo: {file_name}",
+                            "text": PromptBuilder.build_user_message(file_name),
                         },
                         {
                             "type": "image_url",
@@ -120,25 +118,26 @@ class CloudAIClient(BaseAIClient):
             response_format={"type": "json_object"},
         )
         raw = response.choices[0].message.content
-        return self._parse_json_response(raw)
+        return self._process_response(raw, file_name)
 
     def _analyze_google(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         from google.genai import types
 
         file_ref = self._client.files.upload(file=gif_path)
+        system = PromptBuilder.build_system_prompt(include_few_shot=self.use_few_shot)
 
         response = self._client.models.generate_content(
             model=self.model,
             contents=[
-                SYSTEM_PROMPT,
-                f"Analise o exercício no arquivo: {file_name}",
+                system,
+                PromptBuilder.build_user_message(file_name),
                 file_ref,
             ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
             ),
         )
-        return self._parse_json_response(response.text)
+        return self._process_response(response.text, file_name)
 
 
 class LocalAIClient(BaseAIClient):
@@ -147,8 +146,9 @@ class LocalAIClient(BaseAIClient):
         api_url: str = "http://localhost:11434/v1/chat/completions",
         model: str = "llama3.2-vision",
         rate_limit: int = 15,
+        use_few_shot: bool = False,
     ):
-        super().__init__(rate_limit)
+        super().__init__(rate_limit, use_few_shot)
         self.api_url = api_url
         self.model = model
 
@@ -157,7 +157,7 @@ class LocalAIClient(BaseAIClient):
 
         frames: List[Image.Image] = extract_gif_frames(gif_path, max_frames=3)
         content: List[Dict[str, Any]] = [
-            {"type": "text", "text": f"Analise o exercício no arquivo: {file_name}"}
+            {"type": "text", "text": PromptBuilder.build_user_message(file_name)}
         ]
 
         for frame in frames:
@@ -171,10 +171,11 @@ class LocalAIClient(BaseAIClient):
                 }
             )
 
+        system = PromptBuilder.build_system_prompt(include_few_shot=self.use_few_shot)
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
         }
@@ -184,12 +185,13 @@ class LocalAIClient(BaseAIClient):
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"]
 
-        return self._parse_json_response(raw)
+        return self._process_response(raw, file_name)
 
 
 def create_ai_client() -> BaseAIClient:
     mode = os.getenv("AI_MODE", "cloud").lower()
     rate_limit = int(os.getenv("AI_RATE_LIMIT", "15"))
+    use_few_shot = os.getenv("AI_USE_FEW_SHOT", "false").lower() == "true"
 
     if mode == "cloud":
         provider = os.getenv("AI_PROVIDER", "openai").lower()
@@ -199,6 +201,7 @@ def create_ai_client() -> BaseAIClient:
                 api_key=os.getenv("OPENAI_API_KEY", ""),
                 model=os.getenv("AI_MODEL", ""),
                 rate_limit=rate_limit,
+                use_few_shot=use_few_shot,
             )
         elif provider == "google":
             return CloudAIClient(
@@ -206,6 +209,7 @@ def create_ai_client() -> BaseAIClient:
                 api_key=os.getenv("GOOGLE_API_KEY", ""),
                 model=os.getenv("AI_MODEL", ""),
                 rate_limit=rate_limit,
+                use_few_shot=use_few_shot,
             )
         else:
             raise ValueError(f"AI_PROVIDER inválido: {provider}")
@@ -217,6 +221,7 @@ def create_ai_client() -> BaseAIClient:
             ),
             model=os.getenv("LOCAL_MODEL", "llama3.2-vision"),
             rate_limit=rate_limit,
+            use_few_shot=use_few_shot,
         )
 
     else:

@@ -14,6 +14,7 @@ from skills.api_connector import (
 )
 from skills.file_manager import move_to_processed
 from skills.media_processor import extract_gif_frames
+from skills.prompt_builder import PromptBuilder, SYSTEM_PROMPT, FEW_SHOT_EXAMPLES
 
 __all__ = [
     "create_ai_client",
@@ -30,4 +31,7 @@ __all__ = [
     "api_create_instruction",
     "move_to_processed",
     "extract_gif_frames",
+    "PromptBuilder",
+    "SYSTEM_PROMPT",
+    "FEW_SHOT_EXAMPLES",
 ]

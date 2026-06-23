@@ -6,15 +6,19 @@ import os
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 from PIL import Image
 
-from skills.media_processor import extract_gif_frames
+from skills.media_processor import JPEG_QUALITY, extract_gif_frames
 from skills.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
+
+
+def _get_timeout() -> int:
+    return int(os.getenv("AI_REQUEST_TIMEOUT", "300"))
 
 
 class BaseAIClient(ABC):
@@ -60,6 +64,24 @@ class BaseAIClient(ABC):
         logger.info("Campos a reparar na resposta da IA: %s", errors)
         return PromptBuilder.repair_partial_response(data, file_name)
 
+    def _do_retry(
+        self, fn, *args, max_retries: int = 2, base_delay: float = 5.0, **kwargs
+    ) -> Any:
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                return fn(*args, **kwargs)
+            except (httpx.ReadTimeout, httpx.ConnectError) as e:
+                last_exc = e
+                delay = base_delay * (attempt + 1)
+                logger.warning(
+                    "Timeout/erro de conexão (tentativa %d/%d). "
+                    "Aguardando %.0fs antes de retentar...",
+                    attempt + 1, max_retries, delay,
+                )
+                time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
+
 
 class CloudAIClient(BaseAIClient):
     def __init__(
@@ -88,8 +110,8 @@ class CloudAIClient(BaseAIClient):
     def analyze_exercise(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         self._wait_rate_limit()
         if self.provider == "openai":
-            return self._analyze_openai(gif_path, file_name)
-        return self._analyze_google(gif_path, file_name)
+            return self._do_retry(self._analyze_openai, gif_path, file_name)
+        return self._do_retry(self._analyze_google, gif_path, file_name)
 
     def _analyze_openai(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         with open(gif_path, "rb") as f:
@@ -116,6 +138,7 @@ class CloudAIClient(BaseAIClient):
                 },
             ],
             response_format={"type": "json_object"},
+            timeout=_get_timeout(),
         )
         raw = response.choices[0].message.content
         return self._process_response(raw, file_name)
@@ -151,9 +174,37 @@ class LocalAIClient(BaseAIClient):
         super().__init__(rate_limit, use_few_shot)
         self.api_url = api_url
         self.model = model
+        self._timeout = _get_timeout()
+        self._warm_up_done = False
+
+    def _warm_up(self) -> None:
+        if self._warm_up_done:
+            return
+        logger.info("Aquecendo modelo local (%s)...", self.model)
+        try:
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Responda apenas: OK",
+                    }
+                ],
+                "stream": False,
+            }
+            with httpx.Client(timeout=min(self._timeout, 60)) as client:
+                client.post(self.api_url, json=payload)
+            logger.info("Modelo local pronto.")
+        except Exception as e:
+            logger.warning("Warm-up falhou (modelo pode já estar quente): %s", e)
+        self._warm_up_done = True
 
     def analyze_exercise(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         self._wait_rate_limit()
+        return self._do_retry(self._analyze, gif_path, file_name)
+
+    def _analyze(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
+        self._warm_up()
 
         frames: List[Image.Image] = extract_gif_frames(gif_path, max_frames=3)
         content: List[Dict[str, Any]] = [
@@ -162,7 +213,7 @@ class LocalAIClient(BaseAIClient):
 
         for frame in frames:
             buf = io.BytesIO()
-            frame.save(buf, format="JPEG", quality=85)
+            frame.save(buf, format="JPEG", quality=JPEG_QUALITY)
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             content.append(
                 {
@@ -180,7 +231,7 @@ class LocalAIClient(BaseAIClient):
             ],
         }
 
-        with httpx.Client(timeout=120) as client:
+        with httpx.Client(timeout=self._timeout) as client:
             resp = client.post(self.api_url, json=payload)
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"]

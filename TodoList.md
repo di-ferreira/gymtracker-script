@@ -50,6 +50,12 @@
   - [x] Tratamento de erros por arquivo (não interrompe lote)
   - [x] Relatório final (total, sucessos, pulados, falhas)
 
+## Correção de Timeout (Modo Local)
+
+- [x] **`.env.example`** — Adicionado `AI_REQUEST_TIMEOUT` (padrão 300s)
+- [x] **`skills/media_processor.py`** — JPEG quality reduzida para 60, redimensionamento máximo 512px
+- [x] **`skills/ai_client.py`** — Timeout configurável, warm-up do modelo local, `_do_retry()` com backoff em ReadTimeout
+
 ## Verificação
 
 - [x] Testar sintaxe Python (`python -m compileall`)

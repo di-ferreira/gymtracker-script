@@ -13,7 +13,7 @@ from skills.api_connector import (
     api_upload_media,
 )
 from skills.file_manager import move_to_processed
-from skills.media_processor import extract_gif_frames
+from skills.media_processor import JPEG_QUALITY, MAX_DIMENSION, extract_gif_frames
 from skills.prompt_builder import PromptBuilder, SYSTEM_PROMPT, FEW_SHOT_EXAMPLES
 
 __all__ = [
@@ -31,6 +31,8 @@ __all__ = [
     "api_create_instruction",
     "move_to_processed",
     "extract_gif_frames",
+    "JPEG_QUALITY",
+    "MAX_DIMENSION",
     "PromptBuilder",
     "SYSTEM_PROMPT",
     "FEW_SHOT_EXAMPLES",

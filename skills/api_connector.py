@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,8 +19,12 @@ def _rate_limit(endpoint_key: str) -> None:
     _RATE_LIMITER[endpoint_key] = time.time()
 
 
+def _build_url(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}{path}"
+
+
 def api_login(base_url: str, email: str, password: str) -> str:
-    url = f"{base_url.rstrip('/')}/api/v1/auth/login"
+    url = _build_url(base_url, "/api/v1/auth/login")
     _rate_limit("login")
     resp = httpx.post(url, json={"email": email, "password": password}, timeout=15)
     resp.raise_for_status()
@@ -30,8 +33,35 @@ def api_login(base_url: str, email: str, password: str) -> str:
     return token
 
 
+def api_get_equipment(base_url: str, token: str) -> List[Dict[str, Any]]:
+    url = _build_url(base_url, "/api/v1/admin/catalog/equipment/")
+    headers = {"Authorization": f"Bearer {token}"}
+    _rate_limit("equipment")
+    resp = httpx.get(url, headers=headers, timeout=15)
+    resp.raise_for_status()
+    data: List[Dict[str, Any]] = resp.json()
+    logger.info("Equipamentos carregados: %d registros", len(data))
+    return data
+
+
+def api_create_equipment(
+    base_url: str, token: str, name: str, category: Optional[str] = None
+) -> Dict[str, Any]:
+    url = _build_url(base_url, "/api/v1/admin/catalog/equipment/")
+    headers = {"Authorization": f"Bearer {token}"}
+    payload: Dict[str, Any] = {"name": name}
+    if category:
+        payload["category"] = category
+    _rate_limit("create_equipment")
+    resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+    resp.raise_for_status()
+    data: Dict[str, Any] = resp.json()
+    logger.info("Equipamento criado: %s (id=%s)", name, data.get("id", ""))
+    return data
+
+
 def api_get_muscle_groups(base_url: str, token: str) -> List[Dict[str, Any]]:
-    url = f"{base_url.rstrip('/')}/api/v1/admin/catalog/muscle-groups/"
+    url = _build_url(base_url, "/api/v1/admin/catalog/muscle-groups/")
     headers = {"Authorization": f"Bearer {token}"}
     _rate_limit("muscle_groups")
     resp = httpx.get(url, headers=headers, timeout=15)
@@ -41,8 +71,24 @@ def api_get_muscle_groups(base_url: str, token: str) -> List[Dict[str, Any]]:
     return data
 
 
+def api_create_muscle_group(
+    base_url: str, token: str, name: str, description: Optional[str] = None
+) -> Dict[str, Any]:
+    url = _build_url(base_url, "/api/v1/admin/catalog/muscle-groups/")
+    headers = {"Authorization": f"Bearer {token}"}
+    payload: Dict[str, Any] = {"name": name}
+    if description:
+        payload["description"] = description
+    _rate_limit("create_muscle_group")
+    resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+    resp.raise_for_status()
+    data: Dict[str, Any] = resp.json()
+    logger.info("Grupo muscular criado: %s (id=%s)", name, data.get("id", ""))
+    return data
+
+
 def api_get_movement_groups(base_url: str, token: str) -> List[Dict[str, Any]]:
-    url = f"{base_url.rstrip('/')}/api/v1/admin/catalog/movement-groups/"
+    url = _build_url(base_url, "/api/v1/admin/catalog/movement-groups/")
     headers = {"Authorization": f"Bearer {token}"}
     _rate_limit("movement_groups")
     resp = httpx.get(url, headers=headers, timeout=15)
@@ -52,13 +98,39 @@ def api_get_movement_groups(base_url: str, token: str) -> List[Dict[str, Any]]:
     return data
 
 
+def api_create_movement_group(
+    base_url: str, token: str, name: str, description: Optional[str] = None
+) -> Dict[str, Any]:
+    url = _build_url(base_url, "/api/v1/admin/catalog/movement-groups/")
+    headers = {"Authorization": f"Bearer {token}"}
+    payload: Dict[str, Any] = {"name": name}
+    if description:
+        payload["description"] = description
+    _rate_limit("create_movement_group")
+    resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+    resp.raise_for_status()
+    data: Dict[str, Any] = resp.json()
+    logger.info("Grupo de movimento criado: %s (id=%s)", name, data.get("id", ""))
+    return data
+
+
+def api_get_exercises(base_url: str, token: str, skip: int = 0, limit: int = 1000) -> List[Dict[str, Any]]:
+    url = _build_url(base_url, f"/api/v1/admin/catalog/exercises/?skip={skip}&limit={limit}")
+    headers = {"Authorization": f"Bearer {token}"}
+    _rate_limit("exercises")
+    resp = httpx.get(url, headers=headers, timeout=15)
+    resp.raise_for_status()
+    data: List[Dict[str, Any]] = resp.json()
+    return data
+
+
 def api_upload_media(
     base_url: str,
     token: str,
     file_path: Path,
     folder: str = "exercises",
 ) -> str:
-    url = f"{base_url.rstrip('/')}/api/v1/admin/media/upload?folder={folder}"
+    url = _build_url(base_url, f"/api/v1/admin/media/upload?folder={folder}")
     headers = {"Authorization": f"Bearer {token}"}
     _rate_limit("upload")
 
@@ -68,7 +140,9 @@ def api_upload_media(
 
     resp.raise_for_status()
     data = resp.json()
-    media_url: str = data.get("url", "")
+    media_url: str = data.get("url") or data.get("file_url") or data.get("path") or ""
+    if not media_url:
+        logger.warning("Resposta do upload não possui campo url/file_url/path: %s", data)
     logger.info("Mídia enviada: %s -> %s", file_path.name, media_url)
     return media_url
 
@@ -78,7 +152,7 @@ def api_create_exercise(
     token: str,
     payload: Dict[str, Any],
 ) -> Dict[str, Any]:
-    url = f"{base_url.rstrip('/')}/api/v1/admin/catalog/exercises/"
+    url = _build_url(base_url, "/api/v1/admin/catalog/exercises/")
     headers = {"Authorization": f"Bearer {token}"}
     _rate_limit("create_exercise")
 
@@ -86,4 +160,21 @@ def api_create_exercise(
     resp.raise_for_status()
     data: Dict[str, Any] = resp.json()
     logger.info("Exercício criado: %s (id=%s)", payload.get("name", ""), data.get("id", ""))
+    return data
+
+
+def api_create_instruction(
+    base_url: str,
+    token: str,
+    exercise_id: str,
+    description: str,
+    step_order: int,
+) -> Dict[str, Any]:
+    url = _build_url(base_url, f"/api/v1/admin/catalog/exercises/{exercise_id}/instructions/")
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"description": description, "step_order": step_order}
+    _rate_limit("create_instruction")
+    resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+    resp.raise_for_status()
+    data: Dict[str, Any] = resp.json()
     return data

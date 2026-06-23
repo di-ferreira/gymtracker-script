@@ -22,10 +22,13 @@ Analise o GIF (ou seus frames) e o nome do arquivo para identificar o exercício
 Retorna APENAS um objeto JSON válido, sem markdown, sem comentários, sem texto extra:
 
 {
-  "nome_exercicio": "Nome padronizado e comercial do exercício em português",
-  "grupo_muscular": "Descreva os músculos principais e secundários ativados",
-  "modo_execucao": "Passo a passo detalhado de como realizar o movimento corretamente",
+  "nome_exercicio": "Nome padronizado e comercial do exercício em português (ex: Agachamento Livre)",
+  "grupo_muscular": "Descrição textual dos músculos principais e secundários ativados",
+  "musculo_primario": "Nome do grupo muscular principal (ex: Quadríceps, Peitoral, Costas, Glúteos, Ombros, Bíceps, Tríceps, Abdômen, Panturrilha, Trapézio, Antebraço, Posterior de Coxa)",
+  "modo_execucao": "Passo a passo detalhado de como realizar o movimento corretamente, numerando cada etapa (1. ..., 2. ..., etc.)",
   "dicas_seguranca": "Alertas sobre postura, erros comuns a evitar e recomendações de segurança",
+  "equipamentos": ["Lista dos equipamentos utilizados (ex: halteres, barra, banco, máquina, cabo, elástico, smith, bola, step, kettlebell, peso corporal)"],
+  "tipo_movimento": "Tipo de movimento: composto, isolamento, funcional, calistenia",
   "tags": ["tag1", "tag2", "tag3"]
 }
 

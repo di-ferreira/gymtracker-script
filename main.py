@@ -1,18 +1,26 @@
 import logging
 import os
+import re
 import sys
+import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from dotenv import load_dotenv
 
 from skills import (
-    api_create_exercise,
-    api_get_movement_groups,
-    api_get_muscle_groups,
-    api_login,
-    api_upload_media,
     create_ai_client,
+    api_login,
+    api_get_equipment,
+    api_create_equipment,
+    api_get_muscle_groups,
+    api_create_muscle_group,
+    api_get_movement_groups,
+    api_create_movement_group,
+    api_get_exercises,
+    api_upload_media,
+    api_create_exercise,
+    api_create_instruction,
     move_to_processed,
 )
 
@@ -24,43 +32,63 @@ logging.basicConfig(
 logger = logging.getLogger("gymtracker")
 
 
-def _find_group_id(
-    text: str,
-    groups: List[Dict[str, Any]],
-    default_id: Optional[str],
-) -> Optional[str]:
-    text_lower = text.lower().strip()
-    for g in groups:
-        name = g.get("name", "").lower().strip()
-        if name and (name in text_lower or text_lower in name):
-            return str(g["id"])
-    return default_id or None
+def _normalize(text: str) -> str:
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").strip().lower()
+
+
+def _find_by_name(name: str, items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    name_key = _normalize(name)
+    for item in items:
+        if _normalize(item.get("name", "")) == name_key:
+            return item
+    return None
+
+
+def _ensure_entity(
+    name: str,
+    cache: List[Dict[str, Any]],
+    create_func: Callable[..., Dict[str, Any]],
+    base_url: str,
+    token: str,
+) -> str:
+    existing = _find_by_name(name, cache)
+    if existing:
+        logger.info("  -> Já existe: %s (id=%s)", name, existing["id"])
+        return str(existing["id"])
+    logger.info("  -> Criando: %s", name)
+    created = create_func(base_url, token, name)
+    created_id = str(created["id"])
+    cache.append(created)
+    return created_id
+
+
+def _parse_instructions_to_steps(text: str) -> List[str]:
+    if not text:
+        return []
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    numbered_pattern = re.compile(r"^\d+[\.\)]\s*")
+    steps = []
+    for line in lines:
+        clean = numbered_pattern.sub("", line).strip()
+        if clean:
+            steps.append(clean)
+    return steps
 
 
 def build_exercise_payload(
     ai_result: Dict[str, Any],
     gif_url: str,
-    muscle_group_id: Optional[str],
-    movement_group_id: Optional[str],
+    muscle_group_id: str,
+    movement_group_id: str,
 ) -> Dict[str, Any]:
-    name = ai_result.get("nome_exercicio", "")
-    desc = ai_result.get("grupo_muscular", "")
-    tips = ai_result.get("dicas_seguranca", "")
-    execution_text = ai_result.get("modo_execucao", "")
-
-    description = f"{desc}\n\n## Modo de Execução\n{execution_text}" if execution_text else desc
-
-    payload = {
-        "name": name,
-        "description": description,
-        "execution_tips": tips,
+    return {
+        "name": ai_result.get("nome_exercicio", ""),
+        "description": ai_result.get("grupo_muscular", ""),
+        "execution_tips": ai_result.get("dicas_seguranca", ""),
         "gif_url": gif_url,
+        "muscle_group_id": muscle_group_id,
+        "movement_group_id": movement_group_id,
     }
-    if muscle_group_id:
-        payload["muscle_group_id"] = muscle_group_id
-    if movement_group_id:
-        payload["movement_group_id"] = movement_group_id
-    return payload
 
 
 def main() -> None:
@@ -71,8 +99,6 @@ def main() -> None:
     base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
     email = os.getenv("API_EMAIL", "")
     password = os.getenv("API_PASSWORD", "")
-    default_muscle_id = os.getenv("DEFAULT_MUSCLE_GROUP_ID") or None
-    default_movement_id = os.getenv("DEFAULT_MOVEMENT_GROUP_ID") or None
 
     if not gif_root.is_dir():
         logger.error("Pasta raiz de GIFs não encontrada: %s", gif_root)
@@ -83,9 +109,19 @@ def main() -> None:
     logger.info("Autenticando na API...")
     token = api_login(base_url, email, password)
 
-    logger.info("Carregando grupos de referência...")
-    muscle_groups = api_get_muscle_groups(base_url, token)
-    movement_groups = api_get_movement_groups(base_url, token)
+    logger.info("Carregando catálogo de referência da API...")
+    equipment_cache = api_get_equipment(base_url, token)
+    muscle_groups_cache = api_get_muscle_groups(base_url, token)
+    movement_groups_cache = api_get_movement_groups(base_url, token)
+    exercises_cache = api_get_exercises(base_url, token)
+
+    logger.info(
+        "Cache: %d equipamentos, %d grupos musculares, %d movimentos, %d exercícios",
+        len(equipment_cache),
+        len(muscle_groups_cache),
+        len(movement_groups_cache),
+        len(exercises_cache),
+    )
 
     gif_paths = sorted(gif_root.rglob("*.gif"))
     if not gif_paths:
@@ -97,6 +133,7 @@ def main() -> None:
     total = len(gif_paths)
     success_count = 0
     fail_count = 0
+    skipped_count = 0
 
     for idx, gif_path in enumerate(gif_paths, start=1):
         file_name = gif_path.stem
@@ -105,29 +142,42 @@ def main() -> None:
         try:
             logger.info("  -> Enviando para IA...")
             ai_result = ai_client.analyze_exercise(gif_path, file_name)
-            logger.info("  -> IA retornou: %s", ai_result.get("nome_exercicio", "?"))
+            exercise_name = ai_result.get("nome_exercicio", "")
+            logger.info("  -> IA retornou: %s", exercise_name)
 
-            muscle_id = _find_group_id(
-                ai_result.get("grupo_muscular", ""),
-                muscle_groups,
-                default_muscle_id,
-            )
-            movement_id = _find_group_id(
-                ai_result.get("nome_exercicio", ""),
-                movement_groups,
-                default_movement_id,
+            if _find_by_name(exercise_name, exercises_cache):
+                logger.warning("  -> Exercício '%s' já existe no catálogo. Pulando.", exercise_name)
+                move_to_processed(gif_path, processed_dirname)
+                skipped_count += 1
+                continue
+
+            equipamentos = ai_result.get("equipamentos") or []
+            for equip_name in equipamentos:
+                _ensure_entity(
+                    equip_name,
+                    equipment_cache,
+                    api_create_equipment,
+                    base_url,
+                    token,
+                )
+
+            muscle_name = ai_result.get("musculo_primario") or ai_result.get("grupo_muscular", "")
+            muscle_id = _ensure_entity(
+                muscle_name,
+                muscle_groups_cache,
+                api_create_muscle_group,
+                base_url,
+                token,
             )
 
-            if not muscle_id:
-                logger.warning(
-                    "  -> Grupo muscular não identificado para '%s', usando fallback",
-                    ai_result.get("grupo_muscular", ""),
-                )
-            if not movement_id:
-                logger.warning(
-                    "  -> Grupo de movimento não identificado para '%s', usando fallback",
-                    ai_result.get("nome_exercicio", ""),
-                )
+            movement_name = ai_result.get("tipo_movimento", "composto")
+            movement_id = _ensure_entity(
+                movement_name,
+                movement_groups_cache,
+                api_create_movement_group,
+                base_url,
+                token,
+            )
 
             logger.info("  -> Enviando mídia...")
             gif_url = api_upload_media(base_url, token, gif_path)
@@ -137,7 +187,14 @@ def main() -> None:
             )
 
             logger.info("  -> Criando exercício...")
-            api_create_exercise(base_url, token, payload)
+            created = api_create_exercise(base_url, token, payload)
+            exercises_cache.append(created)
+            exercise_db_id = created.get("id", "")
+
+            execution_text = ai_result.get("modo_execucao", "")
+            steps = _parse_instructions_to_steps(execution_text)
+            for step_idx, step_desc in enumerate(steps, start=1):
+                api_create_instruction(base_url, token, exercise_db_id, step_desc, step_idx)
 
             move_to_processed(gif_path, processed_dirname)
             success_count += 1
@@ -156,6 +213,7 @@ def main() -> None:
     logger.info("RELATÓRIO FINAL")
     logger.info("  Total de arquivos: %d", total)
     logger.info("  Sucessos: %d", success_count)
+    logger.info("  Pulados (já existiam): %d", skipped_count)
     logger.info("  Falhas: %d", fail_count)
     logger.info("=" * 50)
 

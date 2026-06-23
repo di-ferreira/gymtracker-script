@@ -1,6 +1,12 @@
 from skills.ai_client import create_ai_client
 from skills.api_connector import (
+    api_create_equipment,
     api_create_exercise,
+    api_create_instruction,
+    api_create_movement_group,
+    api_create_muscle_group,
+    api_get_equipment,
+    api_get_exercises,
     api_get_movement_groups,
     api_get_muscle_groups,
     api_login,
@@ -12,10 +18,16 @@ from skills.media_processor import extract_gif_frames
 __all__ = [
     "create_ai_client",
     "api_login",
+    "api_get_equipment",
+    "api_create_equipment",
     "api_get_muscle_groups",
+    "api_create_muscle_group",
     "api_get_movement_groups",
+    "api_create_movement_group",
+    "api_get_exercises",
     "api_upload_media",
     "api_create_exercise",
+    "api_create_instruction",
     "move_to_processed",
     "extract_gif_frames",
 ]

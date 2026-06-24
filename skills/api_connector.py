@@ -120,14 +120,32 @@ def api_create_movement_group(
     return data
 
 
-def api_get_exercises(base_url: str, token: str, skip: int = 0, limit: int = 1000) -> List[Dict[str, Any]]:
-    url = _build_url(base_url, f"/api/v1/admin/catalog/exercises/?skip={skip}&limit={limit}")
+def api_get_exercises(
+    base_url: str, token: str, page_size: int = 100
+) -> List[Dict[str, Any]]:
+    url = _build_url(base_url, "/api/v1/admin/catalog/exercises/")
     headers = {"Authorization": f"Bearer {token}"}
-    _rate_limit("exercises")
-    resp = httpx.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data: List[Dict[str, Any]] = resp.json()
-    return data
+    all_exercises: List[Dict[str, Any]] = []
+    skip = 0
+
+    while True:
+        _rate_limit("exercises")
+        resp = httpx.get(
+            f"{url}?skip={skip}&limit={page_size}",
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        page: List[Dict[str, Any]] = resp.json()
+        if not page:
+            break
+        all_exercises.extend(page)
+        if len(page) < page_size:
+            break
+        skip += page_size
+
+    logger.info("Exercícios carregados: %d registros", len(all_exercises))
+    return all_exercises
 
 
 def api_upload_media(

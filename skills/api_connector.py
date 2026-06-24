@@ -136,11 +136,12 @@ def api_get_exercises(
             timeout=15,
         )
         resp.raise_for_status()
-        page: List[Dict[str, Any]] = resp.json()
-        if not page:
+        body: Dict[str, Any] = resp.json()
+        page_data: List[Dict[str, Any]] = body.get("data", [])
+        if not page_data:
             break
-        all_exercises.extend(page)
-        if len(page) < page_size:
+        all_exercises.extend(page_data)
+        if len(page_data) < page_size:
             break
         skip += page_size
 

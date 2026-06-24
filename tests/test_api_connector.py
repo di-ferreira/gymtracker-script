@@ -25,7 +25,7 @@ class TestApiGetExercisesPagination:
         page = [{"id": "1", "name": "Exercício A"}] * 50
 
         with patch("skills.api_connector.httpx.get") as mock_get:
-            mock_get.return_value = self._mock_response(page)
+            mock_get.return_value = self._mock_response({"data": page})
             result = api_get_exercises(self.BASE_URL, self.TOKEN, page_size=100)
 
         assert len(result) == 50
@@ -37,8 +37,8 @@ class TestApiGetExercisesPagination:
 
         with patch("skills.api_connector.httpx.get") as mock_get:
             mock_get.side_effect = [
-                self._mock_response(page),
-                self._mock_response([]),
+                self._mock_response({"data": page}),
+                self._mock_response({"data": []}),
             ]
             result = api_get_exercises(self.BASE_URL, self.TOKEN, page_size=100)
 
@@ -52,8 +52,8 @@ class TestApiGetExercisesPagination:
 
         with patch("skills.api_connector.httpx.get") as mock_get:
             mock_get.side_effect = [
-                self._mock_response(page_1),
-                self._mock_response(page_2),
+                self._mock_response({"data": page_1}),
+                self._mock_response({"data": page_2}),
             ]
             result = api_get_exercises(self.BASE_URL, self.TOKEN, page_size=100)
 
@@ -68,9 +68,9 @@ class TestApiGetExercisesPagination:
 
         with patch("skills.api_connector.httpx.get") as mock_get:
             mock_get.side_effect = [
-                self._mock_response(page_1),
-                self._mock_response(page_2),
-                self._mock_response(page_3),
+                self._mock_response({"data": page_1}),
+                self._mock_response({"data": page_2}),
+                self._mock_response({"data": page_3}),
             ]
             result = api_get_exercises(self.BASE_URL, self.TOKEN, page_size=100)
 
@@ -90,7 +90,7 @@ class TestApiGetExercisesPagination:
         ]
 
         with patch("skills.api_connector.httpx.get") as mock_get:
-            mock_get.side_effect = [self._mock_response(p) for p in pages]
+            mock_get.side_effect = [self._mock_response({"data": p}) for p in pages]
             result = api_get_exercises(self.BASE_URL, self.TOKEN, page_size=100)
 
         assert len(result) == 300
@@ -99,7 +99,7 @@ class TestApiGetExercisesPagination:
     def test_empty_database(self):
         """Banco vazio → única chamada, retorna lista vazia."""
         with patch("skills.api_connector.httpx.get") as mock_get:
-            mock_get.return_value = self._mock_response([])
+            mock_get.return_value = self._mock_response({"data": []})
             result = api_get_exercises(self.BASE_URL, self.TOKEN)
 
         assert result == []
@@ -112,8 +112,8 @@ class TestApiGetExercisesPagination:
 
         with patch("skills.api_connector.httpx.get") as mock_get:
             mock_get.side_effect = [
-                self._mock_response(page_1),
-                self._mock_response(page_2),
+                self._mock_response({"data": page_1}),
+                self._mock_response({"data": page_2}),
             ]
             api_get_exercises(self.BASE_URL, self.TOKEN, page_size=100)
 
@@ -139,7 +139,7 @@ class TestApiGetExercisesPagination:
 
         with patch("skills.api_connector.httpx.get") as mock_get, \
              patch("skills.api_connector._rate_limit") as mock_rl:
-            mock_get.return_value = self._mock_response(page)
+            mock_get.return_value = self._mock_response({"data": page})
             api_get_exercises(self.BASE_URL, self.TOKEN, page_size=100)
 
             mock_rl.assert_called_once_with("exercises")

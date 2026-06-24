@@ -58,6 +58,12 @@
 
 ## Verificação
 
+## Bugfix - Paginação da API de Exercícios
+
+- [x] Corrigir `api_get_exercises()` — resposta da API é envelope `{"data": [...], "pagination": {...}}`, não lista plana
+
+## Verificação
+
 - [x] Testar sintaxe Python (`python -m compileall`)
 - [x] Validar imports de todos os módulos
 - [x] Testes funcionais: `_find_by_name` com/sem acentos, `_parse_instructions_to_steps`

@@ -18,6 +18,8 @@ Retorna APENAS um objeto JSON válido, sem markdown, sem comentários, sem texto
   "dicas_seguranca": "Alertas sobre postura, erros comuns a evitar e recomendações de segurança",
   "equipamentos": ["Lista dos equipamentos utilizados (ex: halteres, barra, banco, máquina, cabo, elástico, smith, bola, step, kettlebell, peso corporal)"],
   "tipo_movimento": "Tipo de movimento: composto, isolamento, funcional, calistenia",
+  "dificuldade": "Nível de dificuldade: iniciante, intermediario, avancado, expert",
+  "exercicios_alternativos": ["Lista de nomes de exercícios similares ou alternativos (ex: Agachamento Frontal, Leg Press)"],
   "tags": ["tag1", "tag2", "tag3"]
 }
 
@@ -35,6 +37,8 @@ FEW_SHOT_EXAMPLES: List[Dict[str, Any]] = [
         "dicas_seguranca": "Mantenha a coluna neutra durante todo o movimento. Não deixe os joelhos ultrapassarem a ponta dos pés. Evite curvar as costas.",
         "equipamentos": ["barra", "anilhas"],
         "tipo_movimento": "composto",
+        "dificuldade": "intermediario",
+        "exercicios_alternativos": ["Agachamento Frontal", "Leg Press", "Agachamento Sumô"],
         "tags": ["pernas", "quadriceps", "gluteos", "agachamento", "barra", "basico"],
     },
     {
@@ -45,6 +49,8 @@ FEW_SHOT_EXAMPLES: List[Dict[str, Any]] = [
         "dicas_seguranca": "Não balance o corpo para ganhar impulso. Mantenha os punhos retos. Controle a fase negativa do movimento.",
         "equipamentos": ["halteres"],
         "tipo_movimento": "isolamento",
+        "dificuldade": "iniciante",
+        "exercicios_alternativos": ["Rosca Martelo", "Rosca Scott", "Rosca Concentrada"],
         "tags": ["braços", "biceps", "halteres", "isolamento", "basico"],
     },
     {
@@ -55,6 +61,8 @@ FEW_SHOT_EXAMPLES: List[Dict[str, Any]] = [
         "dicas_seguranca": "Evite balançar o tronco. Não puxe a barra atrás da nuca. Mantenha o core ativado.",
         "equipamentos": ["cabo", "barra", "banco"],
         "tipo_movimento": "composto",
+        "dificuldade": "intermediario",
+        "exercicios_alternativos": ["Remada Baixa", "Puxada Fechada", "Barra Fixa"],
         "tags": ["costas", "pull", "pulley", "maquina", "superior", "intermediario"],
     },
 ]
@@ -66,6 +74,8 @@ VALID_MUSCLE_GROUPS = {
 }
 
 VALID_MOVEMENT_TYPES = {"composto", "isolamento", "funcional", "calistenia"}
+
+VALID_DIFFICULTY_LEVELS = {"iniciante", "intermediario", "avancado", "expert"}
 
 REQUIRED_FIELDS = [
     "nome_exercicio",
@@ -167,6 +177,12 @@ class PromptBuilder:
 
         if not repaired.get("dicas_seguranca"):
             repaired["dicas_seguranca"] = "Consulte um profissional de educação física para orientação adequada."
+
+        if not repaired.get("dificuldade"):
+            repaired["dificuldade"] = "intermediario"
+
+        if not repaired.get("exercicios_alternativos"):
+            repaired["exercicios_alternativos"] = []
 
         return repaired
 

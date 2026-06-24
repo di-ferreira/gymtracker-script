@@ -45,11 +45,17 @@ def api_get_equipment(base_url: str, token: str) -> List[Dict[str, Any]]:
 
 
 def api_create_equipment(
-    base_url: str, token: str, name: str, category: Optional[str] = None
+    base_url: str,
+    token: str,
+    name: str,
+    description: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> Dict[str, Any]:
     url = _build_url(base_url, "/api/v1/admin/catalog/equipment/")
     headers = {"Authorization": f"Bearer {token}"}
     payload: Dict[str, Any] = {"name": name}
+    if description:
+        payload["description"] = description
     if category:
         payload["category"] = category
     _rate_limit("create_equipment")
@@ -177,4 +183,35 @@ def api_create_instruction(
     resp = httpx.post(url, headers=headers, json=payload, timeout=15)
     resp.raise_for_status()
     data: Dict[str, Any] = resp.json()
+    return data
+
+
+def api_create_exercise_alternative(
+    base_url: str,
+    token: str,
+    exercise_id: str,
+    alternative_exercise_id: str,
+    reason: Optional[str] = None,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    url = _build_url(
+        base_url,
+        f"/api/v1/admin/catalog/exercises/{exercise_id}/alternatives/",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    payload: Dict[str, Any] = {
+        "alternative_exercise_id": alternative_exercise_id,
+    }
+    if reason:
+        payload["reason"] = reason
+    if note:
+        payload["note"] = note
+    _rate_limit("create_alternative")
+    resp = httpx.post(url, headers=headers, json=payload, timeout=15)
+    resp.raise_for_status()
+    data: Dict[str, Any] = resp.json()
+    logger.info(
+        "Alternativa criada: exercise=%s alternative=%s (id=%s)",
+        exercise_id, alternative_exercise_id, data.get("id", ""),
+    )
     return data

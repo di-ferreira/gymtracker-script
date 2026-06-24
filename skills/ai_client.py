@@ -85,45 +85,41 @@ class BaseAIClient(ABC):
         raise last_exc  # type: ignore[misc]
 
 
-class CloudAIClient(BaseAIClient):
+class OpenAICompatibleClient(BaseAIClient):
+    """Reusable for any OpenAI-compatible API (OpenAI, NVIDIA, Groq, Together, etc.)."""
+
     def __init__(
         self,
-        provider: str = "openai",
         api_key: str = "",
         model: str = "",
+        base_url: Optional[str] = None,
+        supports_json_mode: bool = True,
         rate_limit: int = 15,
         use_few_shot: bool = False,
     ):
         super().__init__(rate_limit, use_few_shot)
-        self.provider = provider.lower()
-        self.api_key = api_key
+        import openai
 
-        if self.provider == "openai":
-            import openai
-            self._client = openai.OpenAI(api_key=api_key)
-            self.model = model or "gpt-4o"
-        elif self.provider == "google":
-            from google import genai
-            self._client = genai.Client(api_key=api_key)
-            self.model = model or "gemini-2.5-flash"
-        else:
-            raise ValueError(f"Provedor cloud inválido: {self.provider}")
+        kwargs: Dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = openai.OpenAI(**kwargs)
+        self.model = model
+        self._supports_json_mode = supports_json_mode
 
     def analyze_exercise(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         self._wait_rate_limit()
-        if self.provider == "openai":
-            return self._do_retry(self._analyze_openai, gif_path, file_name)
-        return self._do_retry(self._analyze_google, gif_path, file_name)
+        return self._do_retry(self._analyze, gif_path, file_name)
 
-    def _analyze_openai(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
+    def _analyze(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         with open(gif_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
         data_url = f"data:image/gif;base64,{b64}"
         system = PromptBuilder.build_system_prompt(include_few_shot=self.use_few_shot)
 
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=[
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system},
                 {
                     "role": "user",
@@ -139,13 +135,35 @@ class CloudAIClient(BaseAIClient):
                     ],
                 },
             ],
-            response_format={"type": "json_object"},
-            timeout=_get_timeout(),
-        )
+            "timeout": _get_timeout(),
+        }
+        if self._supports_json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        response = self._client.chat.completions.create(**kwargs)
         raw = response.choices[0].message.content
         return self._process_response(raw, file_name)
 
-    def _analyze_google(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
+
+class GoogleAIClient(BaseAIClient):
+    def __init__(
+        self,
+        api_key: str = "",
+        model: str = "",
+        rate_limit: int = 15,
+        use_few_shot: bool = False,
+    ):
+        super().__init__(rate_limit, use_few_shot)
+        from google import genai
+
+        self._client = genai.Client(api_key=api_key)
+        self.model = model
+
+    def analyze_exercise(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
+        self._wait_rate_limit()
+        return self._do_retry(self._analyze, gif_path, file_name)
+
+    def _analyze(self, gif_path: Path, file_name: str) -> Dict[str, Any]:
         from google.genai import types
 
         tmp = None
@@ -254,58 +272,79 @@ class LocalAIClient(BaseAIClient):
         return self._process_response(raw, file_name)
 
 
+_PROVIDER_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "openai": {
+        "cls": OpenAICompatibleClient,
+        "api_key_var": "OPENAI_API_KEY",
+        "default_model": "gpt-4o",
+        "init_kwargs": {"base_url": None, "supports_json_mode": True},
+        "model_pattern": ("gpt-", "o"),
+        "model_hint": "gpt-4o, gpt-4o-mini",
+    },
+    "nvidia": {
+        "cls": OpenAICompatibleClient,
+        "api_key_var": "NVIDIA_API_KEY",
+        "default_model": "microsoft/phi-3_5-vision-instruct",
+        "init_kwargs": {
+            "base_url": "https://integrate.api.nvidia.com/v1",
+            "supports_json_mode": False,
+        },
+        "model_pattern": None,
+    },
+    "google": {
+        "cls": GoogleAIClient,
+        "api_key_var": "GOOGLE_API_KEY",
+        "default_model": "gemini-2.5-flash",
+        "init_kwargs": {},
+        "model_pattern": "gemini-",
+        "model_hint": "gemini-2.5-flash, gemini-2.5-pro",
+    },
+}
+
+
 def create_ai_client() -> BaseAIClient:
     mode = os.getenv("AI_MODE", "cloud").lower()
-    rate_limit = int(os.getenv("AI_RATE_LIMIT", "15"))
-    use_few_shot = os.getenv("AI_USE_FEW_SHOT", "false").lower() == "true"
 
-    if mode == "cloud":
-        provider = os.getenv("AI_PROVIDER", "openai").lower()
-        model = os.getenv("AI_MODEL", "")
-
-        if provider == "google" and model and not model.startswith("gemini-"):
-            logger.warning(
-                "Google model '%s' doesn't match expected pattern 'gemini-*'. "
-                "Common values: gemini-2.5-flash, gemini-2.5-pro",
-                model,
-            )
-        elif provider == "openai" and model and not model.startswith(
-            ("gpt-", "o")
-        ):
-            logger.warning(
-                "OpenAI model '%s' doesn't match expected pattern 'gpt-*' or 'o*'. "
-                "Common values: gpt-4o, gpt-4o-mini",
-                model,
-            )
-
-        if provider == "openai":
-            return CloudAIClient(
-                provider="openai",
-                api_key=os.getenv("OPENAI_API_KEY", ""),
-                model=model,
-                rate_limit=rate_limit,
-                use_few_shot=use_few_shot,
-            )
-        elif provider == "google":
-            return CloudAIClient(
-                provider="google",
-                api_key=os.getenv("GOOGLE_API_KEY", ""),
-                model=os.getenv("AI_MODEL", ""),
-                rate_limit=rate_limit,
-                use_few_shot=use_few_shot,
-            )
-        else:
-            raise ValueError(f"AI_PROVIDER inválido: {provider}")
-
-    elif mode == "local":
+    if mode == "local":
         return LocalAIClient(
             api_url=os.getenv(
                 "LOCAL_API_URL", "http://localhost:11434/v1/chat/completions"
             ),
             model=os.getenv("LOCAL_MODEL", "llama3.2-vision"),
-            rate_limit=rate_limit,
-            use_few_shot=use_few_shot,
+            rate_limit=int(os.getenv("AI_RATE_LIMIT", "15")),
+            use_few_shot=os.getenv("AI_USE_FEW_SHOT", "false").lower() == "true",
         )
 
-    else:
+    if mode != "cloud":
         raise ValueError(f"AI_MODE inválido: {mode}. Use 'cloud' ou 'local'.")
+
+    provider = os.getenv("AI_PROVIDER", "openai").lower()
+    cfg = _PROVIDER_CONFIGS.get(provider)
+    if cfg is None:
+        raise ValueError(
+            f"AI_PROVIDER '{provider}' desconhecido. "
+            f"Disponíveis: {', '.join(_PROVIDER_CONFIGS)}"
+        )
+
+    model = os.getenv("AI_MODEL", "") or cfg["default_model"]
+    api_key = os.getenv(cfg["api_key_var"], "")
+    rate_limit = int(os.getenv("AI_RATE_LIMIT", "15"))
+    use_few_shot = os.getenv("AI_USE_FEW_SHOT", "false").lower() == "true"
+
+    model_pattern = cfg.get("model_pattern")
+    if model_pattern is not None and model and not model.startswith(model_pattern):
+        logger.warning(
+            "Model '%s' does not match expected pattern for provider '%s'. "
+            "Common values: %s",
+            model,
+            provider,
+            cfg.get("model_hint", model_pattern),
+        )
+
+    return cfg["cls"](
+        api_key=api_key,
+        model=model,
+        rate_limit=rate_limit,
+        use_few_shot=use_few_shot,
+        **cfg["init_kwargs"],
+    )

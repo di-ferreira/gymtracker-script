@@ -33,6 +33,8 @@ Define o papel do modelo como **especialista em biomecânica e cinesiologia**, i
   "dicas_seguranca": "string — Alertas de postura e erros comuns",
   "equipamentos": ["string"] — Lista de equipamentos utilizados",
   "tipo_movimento": "string — composto | isolamento | funcional | calistenia",
+  "dificuldade": "string — iniciante | intermediario | avancado | expert",
+  "exercicios_alternativos": ["string"] — Lista de nomes de exercícios similares ou alternativos",
   "tags": ["string"] — Palavras-chave para busca"
 }
 ```
@@ -48,6 +50,8 @@ Define o papel do modelo como **especialista em biomecânica e cinesiologia**, i
 | `dicas_seguranca` | Sim | Texto livre com alertas |
 | `equipamentos` | Sim | Array. Valores comuns: `halteres`, `barra`, `banco`, `máquina`, `cabo`, `elástico`, `smith`, `bola`, `step`, `kettlebell`, `peso corporal` |
 | `tipo_movimento` | Sim | `composto`, `isolamento`, `funcional`, `calistenia` |
+| `dificuldade` | Não | `iniciante`, `intermediario`, `avancado`, `expert`. Default: `intermediario` |
+| `exercicios_alternativos` | Não | Array de nomes de exercícios similares. Opcional. |
 | `tags` | Sim | Mínimo 3 tags. Use os valores sugeridos no prompt |
 
 ---
